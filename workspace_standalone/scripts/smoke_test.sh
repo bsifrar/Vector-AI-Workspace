@@ -4,12 +4,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
-
-if [[ -f "$ROOT_DIR/.env" ]]; then
-    set -a
-    source "$ROOT_DIR/.env"
-    set +a
-fi
+source "$ROOT_DIR/scripts/lib/env.sh"
+load_vector_env
 
 WORKSPACE_HOST="${WORKSPACE_HOST:-127.0.0.1}"
 WORKSPACE_PORT="${WORKSPACE_PORT:-8091}"

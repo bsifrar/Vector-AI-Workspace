@@ -4,14 +4,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
+source "$ROOT_DIR/scripts/lib/env.sh"
+load_vector_env
+
 LOG_DIR="${WORKSPACE_STACK_LOG_DIR:-$ROOT_DIR/.runtime_logs}"
 mkdir -p "$LOG_DIR"
-
-if [[ -f "$ROOT_DIR/.env" ]]; then
-    set -a
-    source "$ROOT_DIR/.env"
-    set +a
-fi
 
 WORKSPACE_HOST="${WORKSPACE_HOST:-127.0.0.1}"
 WORKSPACE_PORT="${WORKSPACE_PORT:-8091}"
@@ -37,7 +34,7 @@ fi
 
 if [[ "$WORKSPACE_ADAPTER_MODE" == "synapse" ]]; then
     echo "Checking external Synapse dependency at $WORKSPACE_SYNAPSE_BASE_URL ..."
-    if ! curl -fsS "$WORKSPACE_SYNAPSE_BASE_URL/" >/dev/null 2>&1 ||        ! curl -fsS "$WORKSPACE_SYNAPSE_BASE_URL/smb/status" >/dev/null 2>&1; then
+    if ! curl -fsS "$WORKSPACE_SYNAPSE_BASE_URL/" >/dev/null 2>&1 || ! curl -fsS "$WORKSPACE_SYNAPSE_BASE_URL/smb/status" >/dev/null 2>&1; then
         echo "Synapse is not healthy at $WORKSPACE_SYNAPSE_BASE_URL"
         echo "Start Synapse separately, or set WORKSPACE_ADAPTER_MODE=null"
         exit 1

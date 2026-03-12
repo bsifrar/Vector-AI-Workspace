@@ -346,9 +346,13 @@
         <div class="panel">
           <h2>Status</h2>
           <div id="status" class="status-grid muted">Loading...</div>
+          <p id="statusWarnings" class="help-text warning" style="margin-top:10px;"></p>
         </div>
         <div class="panel">
-          <h2>Settings</h2>
+          <div class="toolbar">
+            <h2>Settings</h2>
+            <button class="secondary" onclick="runFirstRunSetup()">First-Run Setup</button>
+          </div>
           <div class="settings-grid">
             <select id="apiEnabled">
               <option value="true">API enabled</option>
@@ -361,10 +365,16 @@
             <input id="inputPrice" type="number" step="0.01" placeholder="Input $ / 1M" />
             <input id="outputPrice" type="number" step="0.01" placeholder="Output $ / 1M" />
           </div>
-          <div style="margin-top:12px; display:flex; gap:10px;">
+          <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
             <button onclick="saveSettings()">Save Settings</button>
             <button class="secondary" onclick="loadAll()">Refresh</button>
           </div>
+          <p id="settingsStatus" class="help-text" style="margin-top:10px;">Save your API key, model, and budget settings here.</p>
+        </div>
+        <div class="panel">
+          <h2>First-Run Checklist</h2>
+          <div id="setupChecklist" class="status-grid muted"></div>
+          <p class="help-text" style="margin-top:10px;">Use First-Run Setup after entering your API key and model. It saves settings, refreshes health, and confirms Vector is ready.</p>
         </div>
       </div>
       <div id="tabSessions" class="tab-panel">
@@ -414,6 +424,7 @@
             <button onclick="importChatGPT()">Choose File + Import</button>
           </div>
           <p id="importStatus" class="muted" style="margin-top:10px;">No import run yet.</p>
+          <div id="importDetails" class="help-text" style="margin-top:8px;"></div>
         </div>
         <div class="panel">
           <div class="toolbar">
@@ -494,13 +505,20 @@
         headers: { "Content-Type": "application/json", ...(options.headers || {}) },
         ...options,
       });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `HTTP ${response.status}`);
-      }
       const type = response.headers.get("content-type") || "";
-      if (type.includes("application/json")) return response.json();
-      return response.text();
+      let body = null;
+      if (type.includes("application/json")) {
+        body = await response.json();
+      } else {
+        body = await response.text();
+      }
+      if (!response.ok) {
+        const message = typeof body === "string"
+          ? body
+          : body?.detail || body?.message || body?.error || JSON.stringify(body);
+        throw new Error(message || `HTTP ${response.status}`);
+      }
+      return body;
     }
 
     function esc(text) {
@@ -545,6 +563,11 @@
 
     function formatJson(value) {
       return esc(JSON.stringify(value || {}, null, 2));
+    }
+
+    function parseError(error) {
+      if (!error) return "Unknown error";
+      return String(error.message || error).replace(/^Error:\s*/, "");
     }
 
     function truncate(text, max = 240) {
@@ -637,7 +660,26 @@
         <div><strong>Calls today</strong>: ${esc(usage.calls_today || 0)}</div>
         <div><strong>Spend today</strong>: $${Number(usage.spent_today_usd || 0).toFixed(2)}</div>
       `;
+      const warnings = [];
+      if (!settings.api_key_configured && settings.api_enabled) warnings.push("API is enabled but no Vector API key is configured.");
+      if (status.adapter?.adapter_mode === "synapse" && status.adapter?.status !== "ok") warnings.push("Synapse adapter is not healthy.");
+      if ((settings.remaining_daily_budget_usd || 0) <= 0) warnings.push("Daily budget cap has been exhausted.");
+      document.getElementById("statusWarnings").textContent = warnings.join(" ");
       document.getElementById("adapterMode").textContent = status.adapter?.adapter_mode || "adapter";
+      renderSetupChecklist();
+    }
+
+    function renderSetupChecklist() {
+      const status = state.status || {};
+      const settings = state.settings || {};
+      const checks = [
+        ["API key", settings.api_key_configured ? "configured" : "missing"],
+        ["API access", settings.api_enabled ? "enabled" : "disabled"],
+        ["Model", settings.selected_model || "unset"],
+        ["Vector server", status.status || "unknown"],
+        ["Synapse adapter", status.adapter?.adapter_mode === "synapse" ? (status.adapter?.status || "unknown") : "not required"],
+      ];
+      document.getElementById("setupChecklist").innerHTML = checks.map(([label, value]) => `<div><strong>${esc(label)}</strong>: ${esc(value)}</div>`).join("");
     }
 
     function renderSessions() {
@@ -915,6 +957,9 @@
       document.getElementById("hourlyCap").value = s.hourly_call_cap ?? "";
       document.getElementById("inputPrice").value = s.price_input_per_1m_usd ?? "";
       document.getElementById("outputPrice").value = s.price_output_per_1m_usd ?? "";
+      document.getElementById("settingsStatus").textContent = s.api_key_configured
+        ? "Settings loaded. Vector API key is configured."
+        : "Settings loaded. Add a Vector API key if you want live model responses.";
     }
 
     async function loadStatus() {
@@ -940,20 +985,62 @@
       await loadMessages();
     }
 
-    async function saveSettings() {
-      await api("/workspace/settings", {
-        method: "POST",
-        body: JSON.stringify({
-          api_enabled: document.getElementById("apiEnabled").value === "true",
-          selected_model: document.getElementById("model").value.trim(),
-          api_key: document.getElementById("apiKey").value.trim() || null,
-          daily_spend_cap_usd: Number(document.getElementById("dailyCap").value || 0),
-          hourly_call_cap: Number(document.getElementById("hourlyCap").value || 0),
-          price_input_per_1m_usd: Number(document.getElementById("inputPrice").value || 0),
-          price_output_per_1m_usd: Number(document.getElementById("outputPrice").value || 0),
-        }),
-      });
-      await loadAll();
+    async function saveSettings(options = {}) {
+      const apiEnabled = document.getElementById("apiEnabled").value === "true";
+      const model = document.getElementById("model").value.trim();
+      const apiKey = document.getElementById("apiKey").value.trim();
+      const dailyCap = Number(document.getElementById("dailyCap").value || 0);
+      const hourlyCap = Number(document.getElementById("hourlyCap").value || 0);
+      const inputPrice = Number(document.getElementById("inputPrice").value || 0);
+      const outputPrice = Number(document.getElementById("outputPrice").value || 0);
+      const statusEl = document.getElementById("settingsStatus");
+
+      if (!model) {
+        statusEl.textContent = "Settings error: model is required.";
+        showToast("Settings error: model is required.", "error");
+        return false;
+      }
+      if (apiEnabled && !apiKey && !state.settings?.api_key_configured) {
+        statusEl.textContent = "Settings error: add a Vector API key or disable API access.";
+        showToast("Settings error: add a Vector API key or disable API access.", "error");
+        return false;
+      }
+      try {
+        statusEl.textContent = options.setup ? "Running first-run setup..." : "Saving settings...";
+        await api("/workspace/settings", {
+          method: "POST",
+          body: JSON.stringify({
+            api_enabled: apiEnabled,
+            selected_model: model,
+            api_key: apiKey || null,
+            daily_spend_cap_usd: dailyCap,
+            hourly_call_cap: hourlyCap,
+            price_input_per_1m_usd: inputPrice,
+            price_output_per_1m_usd: outputPrice,
+          }),
+        });
+        document.getElementById("apiKey").value = "";
+        await loadAll();
+        statusEl.textContent = options.setup
+          ? "First-run setup complete. Vector is ready."
+          : "Settings saved successfully.";
+        showToast(options.setup ? "Vector first-run setup complete." : "Settings saved.");
+        return true;
+      } catch (error) {
+        const message = parseError(error);
+        statusEl.textContent = `Settings error: ${message}`;
+        showToast(`Settings error: ${message}`, "error");
+        return false;
+      }
+    }
+
+    async function runFirstRunSetup() {
+      const ok = await saveSettings({ setup: true });
+      if (!ok) return;
+      if (state.status?.adapter?.adapter_mode === "synapse" && state.status?.adapter?.status !== "ok") {
+        showToast("Vector saved settings, but Synapse is not healthy yet.", "error");
+      }
+      setSidebarTab("control");
     }
 
     async function createSession() {
@@ -970,7 +1057,7 @@
     }
 
     async function sendPrompt() {
-      if (!state.sessionId) return alert("Create or select a session first.");
+      if (!state.sessionId) return showToast("Create or select a session first.", "error");
       if (state.currentSession?.status === "archived") return showToast("This session is archived. Clone or start a new chat to continue.", "error");
       const prompt = document.getElementById("prompt").value.trim();
       if (!prompt) return;
@@ -986,37 +1073,48 @@
       chatLog.appendChild(assistantNode);
       chatLog.scrollTop = chatLog.scrollHeight;
 
-      const response = await fetch(`/workspace/sessions/${state.sessionId}/messages/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: prompt,
-          token_budget: 1800,
-          model: document.getElementById("model").value.trim() || "gpt-5.4",
-        }),
-      });
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let text = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() || "";
-        for (const part of parts) {
-          if (!part.startsWith("data:")) continue;
-          const payload = JSON.parse(part.slice(5).trim());
-          if (payload.type === "workspace.response.delta") {
-            text += payload.delta || "";
-            assistantNode.querySelector("#streamingText").textContent = text;
-          } else if (payload.type === "workspace.response.completed") {
-            await loadMessages();
+      try {
+        const response = await fetch(`/workspace/sessions/${state.sessionId}/messages/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: prompt,
+            token_budget: 1800,
+            model: document.getElementById("model").value.trim() || "gpt-5.4",
+          }),
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `HTTP ${response.status}`);
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let text = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            if (!part.startsWith("data:")) continue;
+            const payload = JSON.parse(part.slice(5).trim());
+            if (payload.type === "workspace.response.delta") {
+              text += payload.delta || "";
+              assistantNode.querySelector("#streamingText").textContent = text;
+            } else if (payload.type === "workspace.response.completed") {
+              await loadMessages();
+            }
           }
         }
+        await loadAll();
+      } catch (error) {
+        assistantNode.remove();
+        const message = parseError(error);
+        showToast(`Send failed: ${message}`, "error");
+        await loadMessages();
       }
-      await loadAll();
     }
 
     async function resumeImport() {
@@ -1026,7 +1124,7 @@
         method: "POST",
         body: JSON.stringify({ query, project_id: document.getElementById("projectId").value.trim() || "synapse" }),
       });
-      if (payload.status !== "ok") return alert("No imported chat matched that query.");
+      if (payload.status !== "ok") return showToast("No imported chat matched that query.", "error");
       await loadSessions();
       await selectSession(payload.matched_session.session_id, payload.matched_session.title);
     }
@@ -1062,14 +1160,20 @@
         const summary = (payload.results || [])
           .map(result => `${result.export_path || result.filename || "file"}: ${result.imported_count || 0}`)
           .join(" · ");
+        const errors = (payload.results || [])
+          .filter(result => result.status !== "ok")
+          .map(result => `${result.filename || result.export_path || "file"}: ${result.error || result.status}`);
         statusEl.textContent = `Imported ${payload.imported_count || 0} conversation(s) from ${payload.file_count || 0} file(s) into project ${projectId}.${summary ? " " + summary : ""}`;
+        detailsEl.textContent = errors.length ? `Some files had issues: ${errors.join(" · ")}` : "All selected files imported successfully.";
         fileInput.value = "";
         await loadAll();
         setSidebarTab("imports");
         showToast(`Imported ${payload.imported_count || 0} conversation(s).`);
       } catch (error) {
-        statusEl.textContent = `Import failed: ${error.message}`;
-        showToast(`Import failed: ${error.message}`, "error");
+        const message = parseError(error);
+        statusEl.textContent = `Import failed: ${message}`;
+        detailsEl.textContent = "Check that you selected conversations-*.json files from a ChatGPT export.";
+        showToast(`Import failed: ${message}`, "error");
       }
     }
 
