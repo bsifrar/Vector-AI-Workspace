@@ -1,0 +1,5 @@
+.venv/
+.runtime_logs/
+workspace_standalone/storage/*.db
+workspace_standalone/storage/*.sqlite
+workspace_standalone/**/__pycache__/
