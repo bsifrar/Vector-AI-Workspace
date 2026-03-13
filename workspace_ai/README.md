@@ -1,8 +1,10 @@
-# Workspace-AI
+# Workspace
 
-This is the isolated browser and terminal Workspace application.
+Persistent AI Workspace.
 
-It does not start, stop, or own any external runtime. If you want external-service-backed memory, run that service separately and point this app at it over HTTP.
+Workspace is the isolated browser and terminal application.
+
+It does not start, stop, or own any external runtime. If you want external-service-backed memory, run the external memory service separately and point Workspace at it over HTTP.
 
 ## Install
 
@@ -12,6 +14,11 @@ cd /Users/briansifrar/Workspace-AI
 ```
 
 Use `.env.workspace` for non-secret config and `.env.workspace.secret` for local secrets.
+
+## Env Files
+
+- `.env.workspace`
+- `.env.workspace.secret`
 
 ## Run Without External Memory Service
 
@@ -38,4 +45,16 @@ cd /Users/briansifrar/Workspace-AI
 
 ```bash
 ./workspace_ai/scripts/stop.sh
+```
+
+## Status
+
+```bash
+./workspace_ai/scripts/status.sh
+```
+
+## Smoke Test
+
+```bash
+./workspace_ai/scripts/smoke_test.sh
 ```

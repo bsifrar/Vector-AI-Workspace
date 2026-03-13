@@ -3,6 +3,8 @@
 .env.workspace.secret
 .venv/
 .runtime_logs/
-workspace_standalone/storage/*.db
-workspace_standalone/storage/*.sqlite
-workspace_standalone/**/__pycache__/
+workspace_ai/storage/*.db
+workspace_ai/storage/*.sqlite
+workspace_ai/**/__pycache__/
+workspace_ai/.venv/
+workspace_ai/.runtime_logs/
